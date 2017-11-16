@@ -1,0 +1,2 @@
+b2.c:
+	gcc -std=c11 -Wextra -Wall -pedantic -O3 b2.c -lm
