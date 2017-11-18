@@ -1,2 +1,5 @@
 b2.c:
 	gcc -std=c11 -Wextra -Wall -pedantic -O3 b2.c -lm
+
+b3-2.c
+	gcc -std=c11 -Wextra -Wall -pedantic -O3 b3-2.c -lcrypto

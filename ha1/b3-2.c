@@ -8,17 +8,18 @@
 #include <openssl/sha.h>
 
 #define MIN(a, b)	(a > b ? b : a)
-#define error(...)	do { fprintf(stderr, "%s\n", __VA_ARGS__); exit(1); } while (0)
+#define error(...)	do { fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); exit(1); } while (0)
 
 typedef struct node_t	node_t;
 
 struct node_t {
-	node_t*			left;	/*	Leaf child */
-	node_t*			right;	/*	Right child */
-	node_t*			parent;	/*	Parent node */
-	unsigned char*	value;	/*	Hash value */
-	int				d;		/*	Node depth */
-	int				li;		/*	Leaf index */
+	node_t*			left;		/*	Leaf child */
+	node_t*			right;		/*	Right child */
+	node_t*			parent;		/*	Parent node */
+	unsigned char*	value;		/*	Hash value */
+	int				d;			/*	Node depth */
+	int				li;			/*	Leaf index */
+	bool			copy_value;	/*	If the node is inserted to complete the tree */
 };
 
 typedef struct {
@@ -34,6 +35,10 @@ bool is_leaf(node_t* node)
 	return node->left == NULL && node->right == NULL;
 }
 
+/*
+	true	- right sibling
+	false	- left sibling
+*/
 bool sibling_direction(node_t* node)
 {
 	if (node->parent == NULL)
@@ -159,6 +164,64 @@ node_t* construct_merkle_tree(node_t** nodes, size_t size)
 	return n;
 }
 
+bool insert_intermediate_nodes(node_t* root)
+{
+	int d_left;
+	int d_right;
+	
+	if (root->left == NULL && root->right == NULL) {
+		// it's a leaf
+		return false;
+	} else if (root->left == NULL) {
+		// missing left sibling
+		error("insert_intermediate_nodes: root->left == NULL not implemented");
+	} else if(root->right == NULL) {
+		// missing right sibling
+		error("insert_intermediate_nodes: root->right == NULL not implemented");
+	}
+	
+	insert_intermediate_nodes(root->left);
+	insert_intermediate_nodes(root->right);
+	
+	d_left = root->left->d;
+	d_right = root->right->d;
+		
+	if (d_right > d_left) {
+		node_t*	new_parent = malloc(sizeof(node_t));
+		new_parent->left = root->right;
+		new_parent->right = NULL /* NEW SIBLING */;
+		new_parent->parent = root;
+		new_parent->value = NULL;//malloc(SHA_DIGEST_LENGTH); // hash of left & new right
+		new_parent->d = d_right - 1;
+		new_parent->li = -1;
+		new_parent->copy_value = false;
+		
+		node_t*	new_sibling = malloc(sizeof(node_t));
+		new_sibling->left = NULL;
+		new_sibling->right = NULL;
+		new_sibling->parent = new_parent;
+		new_sibling->value = NULL;//malloc(SHA_DIGEST_LENGTH); // value of root->right
+		new_sibling->d = d_right;
+		new_sibling->li = -1;
+		new_sibling->copy_value = true;
+		
+		new_parent->right = new_sibling;
+		root->right->parent = new_parent;
+		root->right = new_parent;
+		
+		printf("ran correctly with %d %d\n", d_left, d_right);
+		
+		// needs to insert intermediate node with copy of sibling and parent
+		// with sha1 of both nodes
+		return true;
+	} else if (d_left > d_right) {
+		// should not happen
+		error("insert_intermediate_nodes: d_right < d_left %d %d", d_right, d_left);
+	}
+	
+	return false;
+}
+
 int set_parents(node_t* node, node_t* parent, int d)
 {
 	int d_ret_left;
@@ -166,6 +229,8 @@ int set_parents(node_t* node, node_t* parent, int d)
 	
 	if (node == NULL)
 		return g_max_d + 1;
+		
+	node->copy_value = false;
 
 	d_ret_left = set_parents(node->left, node, d + 1);
 	d_ret_right = set_parents(node->right, node, d + 1);
@@ -186,7 +251,7 @@ int set_parents(node_t* node, node_t* parent, int d)
 	return node->d - 1;
 }
 
-unsigned char* unsafe_strcat(unsigned char* dst, const unsigned char* fst, const unsigned char* snd, size_t len)
+void unsafe_strcat(unsigned char* dst, const unsigned char* fst, const unsigned char* snd, size_t len)
 {
 	size_t	i;
 	
@@ -203,201 +268,67 @@ unsigned char* get_merkle_root(node_t* root)
 	unsigned char*	right_val;
 	unsigned char*	combined;
 	unsigned char*	hash;
-	int				diff;
-	
-	if (root == NULL)
-		return NULL;
-	
+		
 	if (is_leaf(root))
 		return root->value;
 		
+	if (root->left->copy_value)
+		error("get_merkle_root: root->left->copy_value should not be true");
+		
 	left_val = get_merkle_root(root->left);
-	right_val = get_merkle_root(root->right);
-		
-	if ((left_val == NULL || right_val == NULL) || (root->left->d != root->right->d)) {
-		combined = malloc(SHA_DIGEST_LENGTH * 2);
-		hash = malloc(SHA_DIGEST_LENGTH);
-		
-		if (left_val == NULL) {
-			unsafe_strcat(combined, right_val, right_val, SHA_DIGEST_LENGTH * 2);
-			SHA1(combined, SHA_DIGEST_LENGTH * 2, hash);
-			
-			left_val = malloc(SHA_DIGEST_LENGTH);
-			memcpy(left_val, hash, SHA_DIGEST_LENGTH);
-		} else if (right_val == NULL) {
-			unsafe_strcat(combined, left_val, left_val, SHA_DIGEST_LENGTH * 2);
-			SHA1(combined, SHA_DIGEST_LENGTH * 2, hash);
-			
-			right_val = malloc(SHA_DIGEST_LENGTH);
-			memcpy(right_val, hash, SHA_DIGEST_LENGTH);
-		} else {			
-			if (root->left->d < root->right->d) {
-				//error("should not happen");
-				node_t*	croot = root;
-				diff = root->right->d - root->left->d;
-				
-				assert(diff == 1);
-				
-				while (diff > 0) {
-					printf("loops\n");
-					unsafe_strcat(combined, right_val, right_val, SHA_DIGEST_LENGTH * 2);
-					SHA1(combined, SHA_DIGEST_LENGTH * 2, hash);
-					
-					unsigned char* old_right_val = right_val;
-					right_val = malloc(SHA_DIGEST_LENGTH);
-					//right_val = malloc(SHA_DIGEST_LENGTH);
-					memcpy(right_val, hash, SHA_DIGEST_LENGTH);
-					diff--;
-					
-					assert(croot->li == -1);
-					
-					/*
-					root->right = parent;
-					parent->parent = root;
-					*/
-					
-					node_t* parent = malloc(sizeof(node_t));
-					parent->left = croot->right;
-					parent->right = /*sibling*/NULL;
-					parent->parent = root;
-					parent->value = right_val;
-					parent->d = croot->right->d - 1;
-					parent->li = -1;
-					
-					node_t*	sibling = malloc(sizeof(node_t));
-					sibling->left = NULL;
-					sibling->right = NULL;
-					sibling->parent = parent;
-					sibling->value = old_right_val;
-					sibling->d = croot->right->d;
-					sibling->li = -1;
-					
-					//assert(croot->parent != NULL);
-					
-					/*
-					if (croot->parent->left == croot)
-						croot->parent->left = parent;
-					else
-						croot->parent->right = parent;
-					
-					croot->parent = parent;
-					*/
-					parent->right = sibling;
-					croot->right = parent;
-					//croot = croot->parent;
-				}
-			} else {
-				error("should not happen");
-				node_t*	croot = root;
-				diff = root->left->d - root->right->d;
-				
-				while (diff > 0) {
-					unsafe_strcat(combined, left_val, left_val, SHA_DIGEST_LENGTH * 2);
-					SHA1(combined, SHA_DIGEST_LENGTH * 2, hash);
-					
-					left_val = malloc(SHA_DIGEST_LENGTH);
-					memcpy(left_val, hash, SHA_DIGEST_LENGTH);
-					diff--;
-					
-					assert(croot->li == -1);
-					
-					node_t* parent = malloc(sizeof(node_t));
-					parent->left = root;
-					parent->right = /*sibling*/NULL;
-					parent->parent = croot->parent;
-					parent->value = left_val;
-					parent->d = croot->d - 1;
-					parent->li = -1;
-					
-					node_t*	sibling = malloc(sizeof(node_t));
-					sibling->left = NULL;
-					sibling->right = NULL;
-					sibling->parent = parent;
-					sibling->value = left_val;
-					sibling->d = croot->d;
-					sibling->li = -1;
-					
-					if (croot->parent->left == croot)
-						croot->parent->left = parent;
-					else
-						croot->parent->right = parent;
-					
-					croot->parent = parent;
-					parent->right = sibling;
-					
-					croot = croot->parent;
-				}
-			}
-		}
-		
-		free(combined);
-		free(hash);
+	
+	if (root->right->copy_value) {
+		right_val = malloc(SHA_DIGEST_LENGTH);
+		memcpy(right_val, left_val, SHA_DIGEST_LENGTH);
+		root->right->value = right_val;
+	} else {
+		right_val = get_merkle_root(root->right);
 	}
-		
+	
 	combined = malloc(SHA_DIGEST_LENGTH * 2);
 	hash = malloc(SHA_DIGEST_LENGTH);
 	unsafe_strcat(combined, left_val, right_val, SHA_DIGEST_LENGTH * 2);
 	SHA1(combined, SHA_DIGEST_LENGTH * 2, hash);
 	
-	printf("gives: ");
+	root->value = hash;
+	
+	printf("hash: ");
 	for (int i = 0; i < SHA_DIGEST_LENGTH; i++)
 		printf("%02x", hash[i]);
 	printf("\n");
-
-/*	
-	root->value = hash;
 	
+	free(combined);
 	return root->value;
-	*/
-	
-	return hash;
 }
 
 unsigned char* get_merkle_depth_node(node_t** nodes, int i, int j)
 {
-	node_t*			n = nodes[i];
+	unsigned char*	resulting_hash;
+	node_t*			n;
 	node_t*			p;
-	unsigned char	app = 'L';
-	unsigned char*	ret;
 	
-	printf("i %d, j %d %d %02x\n", i, j, n->d, n->value[0]);
+	n = nodes[i];
+	p = NULL;
 	
-	while (n->d > j) {
-		p = n;
-		printf("%d\n", n->d);
-		
+	while (n && n->d > j) {
+		printf("%d %d\n", n->d, j);
 		n = get_sibling(n);
-		
-		if (n == NULL)
-			break;
+		p = n;
 		
 		for (int k = 0; k < SHA_DIGEST_LENGTH; k++)
 			printf("%02x", n->value[k]);
 		printf("\n");
 		
 		n = n->parent;
-		
-		if (n == NULL)
-			error("is null");
-			
-		if (n == nodes[i]->parent)
-			continue;
-			
-		for (int k = 0; k < SHA_DIGEST_LENGTH; k++)
-			printf("%02x", n->value[k]);
-		printf("\n");
 	}
-		
-	printf("after loop\n");
-		
-	if (sibling_direction(p))
-		app = 'R';
-		
-	ret = malloc(SHA_DIGEST_LENGTH + 1);
-	ret[0] = app;
-	memcpy(ret + 1, p->value, SHA_DIGEST_LENGTH);
 	
-	return ret;
+	n = p;
+	
+	resulting_hash = malloc(SHA_DIGEST_LENGTH + 1);
+	resulting_hash[0] = sibling_direction(n) ? 'R' : 'L';
+	memcpy(resulting_hash + 1, n->value, SHA_DIGEST_LENGTH);
+	
+	return resulting_hash;
 }
 
 int main(void)
@@ -439,6 +370,9 @@ int main(void)
 	root = construct_merkle_tree((node_t**)get_data(nodes), count(nodes));
 	set_parents(root, NULL, 1);
 	
+	while (insert_intermediate_nodes(root))
+		;
+	
 	merkle_root = get_merkle_root(root);
 	merkle_path = get_merkle_depth_node((node_t**)get_data(nodes), i, j);
 	
@@ -448,7 +382,7 @@ int main(void)
 	printf("\n");
 	printf("merkle depth node for (i = %d, j = %d): ", i, j);
 	printf("%c", merkle_path[0]);
-	for (k = 1; k < SHA_DIGEST_LENGTH; k++)
+	for (k = 1; k < SHA_DIGEST_LENGTH + 1; k++)
 		printf("%02x", merkle_path[k]);
 	for (k = 0; k < SHA_DIGEST_LENGTH; k++)
 		printf("%02x", merkle_root[k]);
