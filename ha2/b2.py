@@ -3,7 +3,7 @@ import struct
 import socket
 from pcapfile import savefile
 
-# TODO: REWRITE THIS
+# taken from https://stackoverflow.com/questions/5619685/conversion-from-ip-string-to-integer-and-backward-in-python
 def ip2int(addr):                                                               
     return struct.unpack("!I", socket.inet_aton(addr))[0] 
 
@@ -136,7 +136,8 @@ def main():
 		
 	print("FINAL:", ip_sum)
 	
-	print(ip2int("85.14.156.21") + ip2int("47.56.124.15") + ip2int("210.25.145.218"))
+	# for test ip2int
+	#print(ip2int("85.14.156.21") + ip2int("47.56.124.15") + ip2int("210.25.145.218"))
 			
 if __name__ == "__main__":
 	main()

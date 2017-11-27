@@ -1,6 +1,7 @@
 import sys
 from binascii import hexlify, unhexlify
 
+# this is probably wrong
 '''
 depending on b, we run
 
