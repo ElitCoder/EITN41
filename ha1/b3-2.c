@@ -1,123 +1,104 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <string.h>
-#include <math.h>
-#include <assert.h>
 
 #include <openssl/sha.h>
 
-#define MIN(a, b)	(a > b ? b : a)
-#define error(...)	do { fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); exit(1); } while (0)
+/*
+************
+VALUE MACROS
+************
+*/
 
+#define VECTOR_START_SIZE	(1)
+#define VECTOR_GROW_SPEED	(2)	/* Should be > 1 */
+
+/*
+***************
+FUNCTION MACROS
+***************
+*/
+
+#define MIN(a, b)	(a > b ? b : a)
+#define ERROR(...)	do 	{															\
+							fprintf(stderr, "ERROR (%s:%d): ", __func__, __LINE__); \
+							fprintf(stderr, __VA_ARGS__);							\
+							fprintf(stderr, "\n");									\
+							exit(1);												\
+						} while (0)
+#define DEBUG(...)	do 	{													\
+							printf("DEBUG (%s:%d): ", __func__, __LINE__);	\
+							printf(__VA_ARGS__);							\
+							printf("\n");									\
+						} while (0)
+			
+/*
+*************
+TYPEDEFS
+*************
+*/
 typedef struct node_t	node_t;
 
+/*
+*******
+STRUCTS
+*******
+*/
+
 struct node_t {
-	node_t*			left;		/*	Leaf child */
-	node_t*			right;		/*	Right child */
-	node_t*			parent;		/*	Parent node */
-	unsigned char*	value;		/*	Hash value */
-	int				d;			/*	Node depth */
-	int				li;			/*	Leaf index */
-	bool			copy_value;	/*	If the node is inserted to complete the tree */
+	node_t*			parent;
+	node_t*			left;
+	node_t*			right;
+	unsigned char*	hash;
 };
 
 typedef struct {
-	void**	data;
-	size_t	count;
-	size_t	reserved;
+	node_t**	nodes;
+	size_t		size;
+	size_t		reserved;
 } vector_t;
 
-static int	g_max_d;
+/*
+****************
+GLOBAL VARIABLES
+****************
+*/
 
-bool is_leaf(node_t* node)
-{
-	return node->left == NULL && node->right == NULL;
-}
+static int	g_leaf_depth;	/* The depth for the leaves */
 
 /*
-	true	- right sibling
-	false	- left sibling
+****************
+HELPER FUNCTIONS
+****************
 */
-bool sibling_direction(node_t* node)
-{
-	if (node->parent == NULL)
-		return false;
-		
-	if (node->parent->left == node)
-		return false;
-		
-	return true;
-}
 
-node_t* get_sibling(node_t* node)
+void* xmalloc(size_t n)
 {
-	if (node->parent == NULL)
-		return NULL;
-		
-	if (node->parent->left == node)
-		return node->parent->right;
-		
-	return node->parent->left;
-}
-
-vector_t* new_vector(void)
-{
-	vector_t*	vector = malloc(sizeof(vector_t));
+	void* ptr = malloc(n);
 	
-	if (vector == NULL)
-		error("malloc failed\n");
+	if (ptr == NULL)
+		ERROR("malloc for %zu bytes failed", n);
 		
-	vector->count = 0;
-	vector->reserved = 1;
-	vector->data = malloc(vector->reserved * sizeof(void*));
-	
-	if (vector->data == NULL)
-		error("malloc failed\n");
-	
-	return vector;
+	return ptr;
 }
 
-void free_vector(vector_t* vector)
+void* xrealloc(void* ptr, size_t n)
 {
-	free(vector->data);
-	free(vector);
-}
-
-void allocate_vector(vector_t* vector)
-{
-	void**	new_data = realloc(vector->data, vector->reserved * 2 * sizeof(void*));
-	
-	if (new_data == NULL)
-		error("realloc failed\n");
+	void* new_ptr = realloc(ptr, n);
 		
-	vector->data = new_data;
-	vector->reserved *= 2;
-}
-
-void insert_last(vector_t* vector, void* node)
-{
-	if (vector->count >= vector->reserved)
-		allocate_vector(vector);
+	if (new_ptr == NULL)
+		ERROR("realloc for %zu bytes failed", n);
 		
-	vector->data[vector->count++] = node;
+	return new_ptr;
 }
 
-void** get_data(vector_t* vector)
+unsigned char* hex_string_to_hex_bytes(char* str)
 {
-	return vector->data;
-}
-
-size_t count(vector_t* vector)
-{
-	return vector->count;
-}
-
-unsigned char* to_bytes(char* str)
-{
-	unsigned char*	bytes = malloc(SHA_DIGEST_LENGTH);
+	unsigned char*	bytes;
 	unsigned int	tmp;
 	int				i;
+	
+	bytes = xmalloc(SHA_DIGEST_LENGTH);
 	
 	for (i = 0; i < SHA_DIGEST_LENGTH; i++) {
 		sscanf(str + (i * 2), "%02x", &tmp);
@@ -127,279 +108,284 @@ unsigned char* to_bytes(char* str)
 	return bytes;
 }
 
-node_t* construct_merkle_tree(node_t** nodes, size_t size)
+void print_hash(unsigned char* hash)
 {
-	size_t	d;
-	node_t*	n = malloc(sizeof(node_t));
-	size_t	pot;
+	int	i;
 	
-	n->parent = NULL;
-	n->value = NULL;
-	n->d = -1;
-	n->li = -1;
-	
-	if (size <= 2) {
-		n->left = nodes[0];
-		n->right = size == 1 ? NULL : nodes[1];
-		
-		return n;
-	}
-	
-	d = size / 2;
-	pot = 1;
-	
-	while (pot < d)
-		pot *= 2;
-		
-	if (pot > size)
-		error("pot > size");
-		
-	d = pot;
-		
-	printf("dividing into %zu and %zu\n", d, size - d);
-	
-	n->left = construct_merkle_tree(nodes, d);
-	n->right = construct_merkle_tree(nodes + d, size - d);
-	
-	return n;
+	for (i = 0; i < SHA_DIGEST_LENGTH; i++)
+		printf("%02x", hash[i]);		
 }
 
-bool insert_intermediate_nodes(node_t* root)
+/*
+------
+NODE_T
+------
+*/
+
+node_t* node_copy(node_t* src)
 {
-	int d_left;
-	int d_right;
+	node_t*	dst = xmalloc(sizeof(node_t));
+	dst->parent = src->parent;
+	dst->left = src->left;
+	dst->right = src->right;
+	dst->hash = xmalloc(SHA_DIGEST_LENGTH);
+	memcpy(dst->hash, src->hash, SHA_DIGEST_LENGTH);
 	
-	if (root->left == NULL && root->right == NULL) {
-		// it's a leaf
-		return false;
-	} else if (root->left == NULL) {
-		// missing left sibling
-		// ignore this case, it should not occur since the tree places all the leaves at left first
-		error("insert_intermediate_nodes: root->left == NULL not implemented");
-	} else if(root->right == NULL) {
-		// missing right sibling
-		root->right = malloc(sizeof(node_t));
-		root->right->left = NULL;
-		root->right->right = NULL;
-		root->right->parent = root;
-		root->right->value = root->left->value;
-		root->right->d = root->left->d;
-		root->right->li = -1;
-		root->right->copy_value = true;
-		//error("insert_intermediate_nodes: root->right == NULL not implemented");
-	}
-	
-	insert_intermediate_nodes(root->left);
-	insert_intermediate_nodes(root->right);
-	
-	d_left = root->left->d;
-	d_right = root->right->d;
-		
-	if (d_right > d_left) {
-		node_t*	new_parent = malloc(sizeof(node_t));
-		new_parent->left = root->right;
-		new_parent->right = NULL /* NEW SIBLING */;
-		new_parent->parent = root;
-		new_parent->value = NULL;//malloc(SHA_DIGEST_LENGTH); // hash of left & new right
-		new_parent->d = d_right - 1;
-		new_parent->li = -1;
-		new_parent->copy_value = false;
-		
-		node_t*	new_sibling = malloc(sizeof(node_t));
-		new_sibling->left = NULL;
-		new_sibling->right = NULL;
-		new_sibling->parent = new_parent;
-		new_sibling->value = NULL;//malloc(SHA_DIGEST_LENGTH); // value of root->right
-		new_sibling->d = d_right;
-		new_sibling->li = -1;
-		new_sibling->copy_value = true;
-		
-		new_parent->right = new_sibling;
-		root->right->parent = new_parent;
-		root->right = new_parent;
-		
-		printf("ran correctly with %d %d\n", d_left, d_right);
-		
-		// needs to insert intermediate node with copy of sibling and parent
-		// with sha1 of both nodes
-		return true;
-	} else if (d_left > d_right) {
-		// should not happen
-		error("insert_intermediate_nodes: d_right < d_left %d %d", d_right, d_left);
-	}
-	
-	return false;
+	return dst;
 }
 
-int set_parents(node_t* node, node_t* parent, int d)
+node_t* node_sibling(node_t* node)
 {
-	int d_ret_left;
-	int	d_ret_right;
-	
 	if (node == NULL)
-		return g_max_d + 1;
+		ERROR("node == NULL");
 		
-	node->copy_value = false;
-
-	d_ret_left = set_parents(node->left, node, d + 1);
-	d_ret_right = set_parents(node->right, node, d + 1);
-	
-	node->parent = parent;
-	
-	if (d > g_max_d)
-		g_max_d = d;
-	
-	if (node->left == NULL && node->right == NULL) {
-		node->d = g_max_d;
-		printf("set leaf d to %d\n", node->d);
-	} else {
-		node->d = MIN(d_ret_right, d_ret_left);
-		printf("set node to %d\n", node->d);
-	}
-	
-	return node->d - 1;
+	if (node->parent == NULL)
+		ERROR("node->parent == NULL (i.e, node is root)");
+		
+	if (node->parent->left == node)
+		return node->parent->right;
+	else
+		return node->parent->left;
 }
 
-void unsafe_strcat(unsigned char* dst, const unsigned char* fst, const unsigned char* snd, size_t len)
+char node_get_direction(node_t* node)
 {
-	size_t	i;
-	
-	for (i = 0; i < len / 2; i++)
-		dst[i] = fst[i];
+	if (node == NULL)
+		ERROR("node == NULL");
 		
-	for (; i < len; i++)
-		dst[i] = snd[i - len / 2];
+	if (node->parent == NULL)
+		return 'L';
+		
+	if (node->parent->left == node)
+		return 'L';
+	else
+		return 'R';
 }
 
-unsigned char* get_merkle_root(node_t* root)
+void node_tree_free(node_t* root)
 {
-	unsigned char*	left_val;
-	unsigned char*	right_val;
-	unsigned char*	combined;
-	unsigned char*	hash;
+	free(root->hash);
+	free(root);
+}
+
+/*
+--------
+VECTOR_T
+--------
+*/
+
+vector_t* vector_new(void)
+{
+	vector_t*	vector = xmalloc(sizeof(vector_t));
+	vector->nodes = xmalloc(sizeof(node_t*) * VECTOR_START_SIZE);
+	vector->reserved = VECTOR_START_SIZE;
+	vector->size = 0;
+	
+	return vector;
+}
+
+void vector_reallocate(vector_t* vector)
+{
+	if (vector->size < vector->reserved)
+		return;
 		
-	if (is_leaf(root))
-		return root->value;
+	vector->nodes = xrealloc(vector->nodes, sizeof(node_t*) * vector->reserved * VECTOR_GROW_SPEED);
+	vector->reserved *= VECTOR_GROW_SPEED;	
+}
+
+void vector_insert_last(vector_t* vector, node_t* node)
+{
+	vector_reallocate(vector);
+	vector->nodes[vector->size++] = node;
+}
+
+void vector_insert_last_malloc(vector_t* vector, node_t* src)
+{	
+	vector_reallocate(vector);
+	vector->nodes[vector->size++] = node_copy(src);
+}
+
+size_t vector_size(vector_t* vector)
+{
+	return vector->size;
+}
+
+node_t* vector_front(vector_t* vector)
+{
+	return vector->nodes[0];
+}
+
+node_t* vector_back(vector_t* vector)
+{
+	return vector->nodes[vector->size - 1];
+}
+
+node_t* vector_get(vector_t* vector, size_t i)
+{
+	return vector->nodes[i];
+}
+
+void vector_free_shallow(vector_t* vector)
+{
+	free(vector->nodes);
+	free(vector);
+}
+
+vector_t* vector_copy(vector_t* vector)
+{
+	vector_t*	copy = xmalloc(sizeof(vector_t));
+	size_t		i;
+	
+	copy->nodes = xmalloc(sizeof(node_t*) * vector->size);
+	
+	for (i = 0; i < vector->size; i++)
+		copy->nodes[i] = vector->nodes[i];
 		
-	if (root->left->copy_value)
-		error("get_merkle_root: root->left->copy_value should not be true");
-		
-	left_val = get_merkle_root(root->left);
+	copy->reserved = vector->size;
+	copy->size = vector->size;
 	
-	if (root->right->copy_value) {
-		right_val = malloc(SHA_DIGEST_LENGTH);
-		memcpy(right_val, left_val, SHA_DIGEST_LENGTH);
-		root->right->value = right_val;
-	} else {
-		right_val = get_merkle_root(root->right);
-	}
+	return copy;
+}
+
+/*
+****************
+MERKLE FUNCTIONS
+****************
+*/
+
+node_t* get_merkle_node_at_depth(vector_t* leaves, int i, int j)
+{
+	node_t*	node;
+	node_t* correct;
 	
-	combined = malloc(SHA_DIGEST_LENGTH * 2);
-	hash = malloc(SHA_DIGEST_LENGTH);
-	unsafe_strcat(combined, left_val, right_val, SHA_DIGEST_LENGTH * 2);
-	SHA1(combined, SHA_DIGEST_LENGTH * 2, hash);
+	node = vector_get(leaves, i);
+	correct = NULL;
 	
-	root->value = hash;
-	
-	printf("hash: ");
-	for (int i = 0; i < SHA_DIGEST_LENGTH; i++)
-		printf("%02x", hash[i]);
+	printf("node at index %d: ", i);
+	print_hash(node->hash);
 	printf("\n");
 	
-	free(combined);
-	return root->value;
-}
-
-unsigned char* get_merkle_depth_node(node_t** nodes, int i, int j)
-{
-	unsigned char*	resulting_hash;
-	node_t*			n;
-	node_t*			p;
-	
-	n = nodes[i];
-	p = NULL;
-	
-	while (n && n->d > j) {
-		printf("%d %d\n", n->d, j);
-		n = get_sibling(n);
-		p = n;
+	while (g_leaf_depth > 0) {
+		node = node_sibling(node);
 		
-		for (int k = 0; k < SHA_DIGEST_LENGTH; k++)
-			printf("%02x", n->value[k]);
+		printf("path: %c", node_get_direction(node));
+		print_hash(node->hash);
 		printf("\n");
 		
-		n = n->parent;
+		if (g_leaf_depth == j)
+			correct = node;	
+		
+		node = node->parent;
+		g_leaf_depth--;
 	}
 	
-	n = p;
+	return correct;
+}
+
+node_t* build_merkle_tree(vector_t* leafs)
+{
+	vector_t*		parents;
+	node_t*			parent;
+	node_t*			left;
+	node_t*			right;
+	unsigned char*	concatenation;
+	size_t			i;
 	
-	resulting_hash = malloc(SHA_DIGEST_LENGTH + 1);
-	resulting_hash[0] = sibling_direction(n) ? 'R' : 'L';
-	memcpy(resulting_hash + 1, n->value, SHA_DIGEST_LENGTH);
+	if (vector_size(leafs) <= 1) {
+		parent = vector_front(leafs);
+		vector_free_shallow(leafs);
+		
+		return parent;
+	}
+		
+	if (vector_size(leafs) % 2 != 0)
+		vector_insert_last_malloc(leafs, vector_back(leafs));
+		
+	parents = vector_new();
+		
+	for (i = 0; i < vector_size(leafs); i += 2) {
+		parent = xmalloc(sizeof(node_t));
+		left = vector_get(leafs, i);
+		right = vector_get(leafs, i + 1);
+		
+		parent->left = left;
+		parent->right = right;
+		left->parent = parent;
+		right->parent = parent;
+		
+		concatenation = xmalloc(SHA_DIGEST_LENGTH * 2);
+		memcpy(concatenation, left->hash, SHA_DIGEST_LENGTH);
+		memcpy(concatenation + SHA_DIGEST_LENGTH, right->hash, SHA_DIGEST_LENGTH);
+		parent->hash = xmalloc(SHA_DIGEST_LENGTH);
+		SHA1(concatenation, SHA_DIGEST_LENGTH * 2, parent->hash);
+		
+		vector_insert_last(parents, parent);
+		free(concatenation);
+	}
 	
-	return resulting_hash;
+	vector_free_shallow(leafs);
+	
+	g_leaf_depth++;
+	return build_merkle_tree(parents);
 }
 
 int main(void)
 {
-	int				i;
-	int				j;
-	int				li;
-	char*			tmp = NULL;
-	size_t			size;
-	vector_t*		lines = new_vector();
-	vector_t*		nodes = new_vector();
-	node_t*			n;
-	node_t*			root;
-	unsigned char*	merkle_root;
-	unsigned char*	merkle_path;
-	int				k;
+	vector_t*	leafs;
+	node_t*		root;
+	node_t*		node;
+	char*		line;
+	size_t		length;
+	int			i;
+	int			j;
 	
-	getline(&tmp, &size, stdin);
-	i = strtol(tmp, NULL, 10);
+	leafs = vector_new();
+	line = NULL;
+	length = 0;
 	
-	getline(&tmp, &size, stdin);
-	j = strtol(tmp, NULL, 10);
+	getline(&line, &length, stdin);
+	i = strtol(line, NULL, 10);
+	DEBUG("i: %d", i);
 	
-	li = 0;
-	while (getline(&tmp, &size, stdin) != -1) {
-		n = malloc(sizeof(node_t));
+	getline(&line, &length, stdin);
+	j = strtol(line, NULL, 10);
+	DEBUG("j: %d", j);
+	
+	while (getline(&line, &length, stdin) != -1) {
+		node_t* n = xmalloc(sizeof(node_t));
 		n->left = NULL;
 		n->right = NULL;
 		n->parent = NULL;
-		n->value = to_bytes(tmp);
-		n->li = li;
-				
-		insert_last(nodes, n);
-		li++;
+		n->hash = hex_string_to_hex_bytes(line);
+		
+		vector_insert_last(leafs, n);
 	}
 	
-	printf("count(nodes) = %zu\n", count(nodes));
+	DEBUG("leafs: %zu", vector_size(leafs));	
 	
-	root = construct_merkle_tree((node_t**)get_data(nodes), count(nodes));
-	set_parents(root, NULL, 1);
+	root = build_merkle_tree(vector_copy(leafs));
+	DEBUG("depth: %d", g_leaf_depth);
 	
-	while (insert_intermediate_nodes(root))
-		;
-	
-	merkle_root = get_merkle_root(root);
-	merkle_path = get_merkle_depth_node((node_t**)get_data(nodes), i, j);
-	
-	printf("merkle root: ");
-	for (k = 0; k < SHA_DIGEST_LENGTH; k++)
-		printf("%02x", merkle_root[k]);
-	printf("\n");
-	printf("merkle depth node for (i = %d, j = %d): ", i, j);
-	printf("%c", merkle_path[0]);
-	for (k = 1; k < SHA_DIGEST_LENGTH + 1; k++)
-		printf("%02x", merkle_path[k]);
-	for (k = 0; k < SHA_DIGEST_LENGTH; k++)
-		printf("%02x", merkle_root[k]);
+	printf("root: ");
+	print_hash(root->hash);
 	printf("\n");
 	
-	free(tmp);
-	free_vector(lines);
-	free_vector(nodes);
+	node = get_merkle_node_at_depth(leafs, i, j);
+	printf("depth node: ");
+	print_hash(node->hash);
+	printf("\n");
+	
+	printf("final result: %c", node_get_direction(node));
+	print_hash(node->hash);
+	print_hash(root->hash);
+	printf("\n");
+	
+	vector_free_shallow(leafs);
+	
+	if (line != NULL)
+		free(line);
+		
+	node_tree_free(root);
 	
 	return 0;
 }

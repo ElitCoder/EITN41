@@ -1,0 +1,10 @@
+collision när 2^(n/2) hashes uträknade
+(enligt https://crypto.stackexchange.com/questions/2622/real-life-collision-when-only-using-truncated-hash)
+
+k = 16 bits
+v = 1 bit
+
+2^17 hashes möjliga hashes (antar jag=
+
+dvs collision när n = 17 * 2 = 34 bits?
+=> X < 34 bryter allt?

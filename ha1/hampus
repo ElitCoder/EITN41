@@ -1,0 +1,68 @@
+import hashlib
+import binascii
+
+def byte_to_hex(b):
+	return binascii.hexlify(b)
+
+def build_tree(leafs):
+    if len(leafs) <= 1:
+        return leafs[0]
+ 
+    if len(leafs) % 2 != 0:
+        leafs.append(leafs[-1])
+ 
+    parent_nodes = []
+ 
+    for x in range(0, len(leafs), 2):        # x, x+1
+        m = hashlib.sha1()
+        m.update(leafs[x].root)
+        m.update(leafs[x+1].root)
+        parent_nodes.append(Tree(m.digest(), leafs[x], leafs[x+1]))
+ 
+    return build_tree(parent_nodes)
+	
+class Tree(object):
+    def __init__(self, root, left, right):
+        self.root = root
+        self.left = left
+        self.right = right
+			
+def build_merkle_path(leaf, tree, path):
+    if tree.right is None:      # If one is None then both is None by design.
+        return False
+ 
+    if tree.left.root == leaf or build_merkle_path(leaf, tree.left, path):
+        path.append('R' + byte_to_hex(tree.right.root)) # '('R', tree.right.root))
+        return True
+    if tree.right.root == leaf or build_merkle_path(leaf, tree.right, path):
+        path.append('L' + byte_to_hex(tree.left.root))    # ('L', tree.left.root))
+        return True
+ 
+    return False
+				
+				
+def part_2(filename):
+    """
+    :param filename: See how file should be built in B3b_list.txt
+    :return:
+    1. The Merkle path for leaf `(i), starting with the sibling of `(i).
+    2. The Merkle path node at a given depth j (this will be used in the assessment).
+    3. The resulting Merkle root (this will be used in the assessment).
+    """
+    with open(filename, 'r') as f:
+        i = int(f.readline().strip())
+        j = int(f.readline().strip())
+        merkle_leafs = [bytes.fromhex(x.strip()) for x in f.readlines()]
+ 
+    merkle_tree_leafs = list(map(lambda x: Tree(x, None, None), merkle_leafs))
+    tree = build_tree(merkle_tree_leafs)
+    a = []
+    build_merkle_path(merkle_leafs[i], tree, a)
+    print("Path:")
+    for val in a:
+        print(val)
+    print()
+    node_j = a[-j]
+    return "%s%s" % (node_j, byte_to_hex(tree.root))
+
+part_2("leavesha1")
