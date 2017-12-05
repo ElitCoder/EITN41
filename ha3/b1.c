@@ -3,9 +3,12 @@
 #include <math.h>
 #include <assert.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include <openssl/sha.h>
 #include <omp.h>
+
+#define MAX_X	(160)
 
 typedef struct {
 	unsigned char	v;
@@ -14,6 +17,8 @@ typedef struct {
 		unsigned char	b[2];
 	};
 } value_t;
+
+static unsigned long long	g_results[MAX_X + 1];
 
 unsigned char* bytes_to_string(unsigned char* b, size_t len)
 {
@@ -28,57 +33,58 @@ unsigned char* bytes_to_string(unsigned char* b, size_t len)
 	return string;
 }
 
-void hex_to_binary(char* dst, unsigned char* src)
+void char_to_binary(unsigned char* hash, char* dst)
 {
-	char tmp[9];
-	itoa(src[0], tmp, 2);
-	
-	printf("%s\n", tmp);
+	int	i;
+	int	j;
+
+	for (i = 0; i < SHA_DIGEST_LENGTH; i++)
+		for (j = 0; j < 8; j++)
+			dst[i * 8 + j] = ((hash[i] >> j) & 1) + '0';
 }
 
-void collisions(unsigned char** vzero, unsigned char** vone, unsigned int len, int X)
+bool collisions(char** vzero, char** vone, unsigned int len, int X)
 {
-	unsigned int	i;
-	unsigned int	j;
-	size_t			nbr_collisions = 0;
-	unsigned char*	tmp1;
-	unsigned char*	tmp2;
+	unsigned int		i;
+	unsigned int		j;
+	unsigned long long	nbr_collisions = 0;
 	
-	hex_to_binary(NULL, vzero[0]);
-	
-	printf("checking collision\n");
-	
-	#pragma omp parallel for private(i, j) reduction(+:nbr_collisions)
-	for (i = 0; i < len; i++) {		
-		for (j = 0; j < len; j++)
-			if (memcmp(vzero[i], vone[j], 2) == 0)
+	#pragma omp parallel for private(i, j) reduction(+: nbr_collisions)
+	for (i = 0; i < len; i++) {
+		for (j = 0; j < len; j++) {
+			if (memcmp(vzero[i], vone[j], X) == 0)
 				nbr_collisions++;		
+		}
 	}
 	
-	printf("collisions: %zu\n", nbr_collisions);
-	printf("proc %f\n", (double)nbr_collisions / len);
+	g_results[X] = nbr_collisions;
+	
+	return nbr_collisions > 0;
 }
 
-unsigned char** create(value_t* val)
+char** create(value_t* val)
 {
-	unsigned char**	results;
+	char**	results;
 	unsigned int	n;
 	unsigned int	i;
 	unsigned char	tmp[3];
+	unsigned char*	hash;
 	
 	printf("creating hashes\n");
-	
-	assert(sizeof(unsigned short) == 2);
-	assert(sizeof(unsigned char) == 1);
 		
 	n = (unsigned int)pow(2, 16);
-	results = malloc(sizeof(unsigned char*) * n);
+	results = malloc(sizeof(char*) * n);
 	
 	if (results == NULL)
 		printf("malloc failed\n");
+		
+	hash = malloc(SHA_DIGEST_LENGTH);
+	
+	if (hash == NULL)
+		printf("malloc failed\n");
 	
 	for (i = 0; i < n; i++) {
-		results[i] = malloc(SHA_DIGEST_LENGTH);
+		results[i] = malloc(SHA_DIGEST_LENGTH * 8);
 		
 		if (results[i] == NULL)
 			printf("malloc failed\n");
@@ -90,13 +96,16 @@ unsigned char** create(value_t* val)
 		tmp[1] = val->b[0];
 		tmp[2] = val->b[1];
 		
-		SHA1(tmp, 3, results[i]);				
+		SHA1(tmp, 3, hash);
+		char_to_binary(hash, results[i]);
 	}
+	
+	free(hash);
 	
 	return results;
 }
 
-void free_results(unsigned char** p)
+void free_results(char** p)
 {
 	unsigned int	i;
 	
@@ -108,15 +117,28 @@ void free_results(unsigned char** p)
 
 int main(void)
 {
-	unsigned char** zero;
-	unsigned char**	one;
+	char** zero;
+	char**	one;
+	int		i;
+	int		j;
+	int		n;
 	value_t	b = { .v = 0, .s = 0 };
+	
+	n = (int)pow(2, 16);
 	
 	zero = create(&b);
 	b.v = 1;
 	one = create(&b);
 	
-	collisions(zero, one, (int)pow(2, 16), 1);
+	for (i = 1; i <= MAX_X; i++) {
+		printf("running for x = %d\n", i);
+		
+		if (!collisions(zero, one, n, i))
+			break;
+	}
+			
+	for (j = 1; j < i; j++)
+		printf("X = %d bits, %llu collisions, %f%c\n", j, g_results[j], (double)g_results[j] / ((double)n * (double)n), '%');
 	
 	free_results(zero);
 	free_results(one);
