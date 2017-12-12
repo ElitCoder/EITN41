@@ -10,9 +10,9 @@ def test(url):
 	return time
 
 def main():
-	base_url = "https://eitn41.eit.lth.se:3119/ha4/addgrade.php?name=Kalle&grade=5&signature="
+	base_url = "https://eitn41.eit.lth.se:3119/ha4/addgrade.php?name=Martin&grade=4&signature="
 	possibilites = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
-	current_time = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+	current_time = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]	
 	
 	for i in range(20):
 		print("iteration", i + 1)
