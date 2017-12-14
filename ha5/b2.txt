@@ -1,0 +1,9 @@
+openssl cms -decrypt -in mail1.msg -recip certreceiver.pem -inkey keyreceiver.pem 
+
+openssl cms -decrypt -in mail1.msg -recip certreceiver.pem -inkey keyreceiver.pem (-out hej.txt) 
+
+
+openssl cms -decrypt -in mail1.msg -recip certreceiver.pem -inkey keyreceiver.pem -out hej.txt
+
+En gång utan out för att få subject integern
+
